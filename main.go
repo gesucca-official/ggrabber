@@ -42,6 +42,9 @@ func main() {
 		fmt.Println("ggrabber", version)
 		return
 	}
+	if relaunchInTerminal() {
+		return
+	}
 
 	code := run(*dirFlag, *jobs, *noMeta, *logout)
 	if !*noPause && isTerminal() {
@@ -58,16 +61,19 @@ func run(dirFlag string, jobs int, noMeta, logout bool) int {
 		if err := forgetToken(); err != nil {
 			fmt.Println("Nessun token salvato da rimuovere.")
 		} else {
-			fmt.Println("Token rimosso dal portachiavi.")
+			fmt.Println("Login salvato rimosso.")
 		}
 		return 0
 	}
 
 	if _, err := exec.LookPath("git"); err != nil {
 		fmt.Println("ERRORE: git non è installato.")
-		if runtime.GOOS == "darwin" {
+		switch runtime.GOOS {
+		case "darwin":
 			fmt.Println("Installa con:  xcode-select --install")
-		} else {
+		case "linux":
+			fmt.Println("Installalo con il gestore pacchetti, es.:  sudo apt install git")
+		default:
 			fmt.Println("Scaricalo da:  https://git-scm.com/downloads")
 		}
 		return 1

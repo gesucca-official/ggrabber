@@ -15,6 +15,8 @@ mkdir -p dist
 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o dist/ggrabber-windows.exe .
 GOOS=darwin  GOARCH=arm64 go build -trimpath -ldflags "$LDFLAGS" -o dist/ggrabber-macos-arm64 .
 GOOS=darwin  GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o dist/ggrabber-macos-amd64 .
+GOOS=linux   GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o dist/ggrabber-linux-amd64 .
+GOOS=linux   GOARCH=arm64 go build -trimpath -ldflags "$LDFLAGS" -o dist/ggrabber-linux-arm64 .
 
 # Su macOS unisce le due architetture in un unico binario universale.
 if command -v lipo >/dev/null 2>&1; then

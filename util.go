@@ -100,13 +100,8 @@ func openBrowser(url string) error {
 }
 
 func copyToClipboard(text string) bool {
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "windows":
-		cmd = exec.Command("clip")
-	case "darwin":
-		cmd = exec.Command("pbcopy")
-	default:
+	cmd := clipboardCmd()
+	if cmd == nil {
 		return false
 	}
 	cmd.Stdin = strings.NewReader(text)

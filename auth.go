@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -21,16 +22,62 @@ const (
 	scopes         = "repo read:org gist"
 )
 
-func loadSavedToken() string {
-	t, err := keyring.Get(keyringService, keyringUser)
+// Il token va nel portachiavi di sistema. Dove non c'è (Linux senza desktop, es. un NAS o
+// un server) si ripiega su un file leggibile solo dall'utente: ~/.config/ggrabber/token.
+
+func tokenFile() string {
+	dir, err := os.UserConfigDir()
 	if err != nil {
 		return ""
 	}
-	return t
+	return filepath.Join(dir, "ggrabber", "token")
 }
 
-func saveToken(t string) error { return keyring.Set(keyringService, keyringUser, t) }
-func forgetToken() error       { return keyring.Delete(keyringService, keyringUser) }
+func loadSavedToken() string {
+	if t, err := keyring.Get(keyringService, keyringUser); err == nil && t != "" {
+		return t
+	}
+	if f := tokenFile(); f != "" {
+		if b, err := os.ReadFile(f); err == nil {
+			return strings.TrimSpace(string(b))
+		}
+	}
+	return ""
+}
+
+// saveToken restituisce dove è stato salvato il token.
+func saveToken(t string) (string, error) {
+	f := tokenFile()
+	if err := keyring.Set(keyringService, keyringUser, t); err == nil {
+		if f != "" {
+			os.Remove(f) // niente copie vecchie in chiaro
+		}
+		return "nel portachiavi di sistema", nil
+	}
+	if f == "" {
+		return "", errors.New("nessun portachiavi né cartella di configurazione disponibili")
+	}
+	if err := os.MkdirAll(filepath.Dir(f), 0o700); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(f, []byte(t+"\n"), 0o600); err != nil {
+		return "", err
+	}
+	os.Chmod(f, 0o600) // anche se il file esisteva già con altri permessi
+	return "in " + f + " (leggibile solo dal tuo utente)", nil
+}
+
+func forgetToken() error {
+	errK := keyring.Delete(keyringService, keyringUser)
+	errF := os.ErrNotExist
+	if f := tokenFile(); f != "" {
+		errF = os.Remove(f)
+	}
+	if errK != nil && errF != nil {
+		return errors.New("nessun token salvato")
+	}
+	return nil
+}
 
 // ghCLIToken riusa il login della GitHub CLI, se presente.
 func ghCLIToken() string {
@@ -93,10 +140,10 @@ func authenticate(ctx context.Context) (string, *User, error) {
 		fmt.Println("Attenzione: il token non ha il permesso 'repo', le repo private potrebbero mancare.")
 	}
 	fmt.Printf("\nConnesso come %s\n", describe(u))
-	if err := saveToken(t); err != nil {
-		fmt.Println("(non sono riuscito a salvare il login nel portachiavi, lo richiederò la prossima volta)")
+	if where, err := saveToken(t); err != nil {
+		fmt.Println("(non sono riuscito a salvare il login, lo richiederò la prossima volta:", err, ")")
 	} else {
-		fmt.Println("Login salvato nel portachiavi di sistema: la prossima volta non serve rifarlo.")
+		fmt.Printf("Login salvato %s: la prossima volta non serve rifarlo.\n", where)
 	}
 	return t, u, nil
 }
