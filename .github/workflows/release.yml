@@ -1,0 +1,39 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # macOS: serve lipo per il binario universale; Windows si cross-compila da qui.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        env:
+          GGRABBER_CLIENT_ID: ${{ vars.GGRABBER_CLIENT_ID }}
+          VERSION: ${{ github.ref_name }}
+        run: ./build.sh
+      - name: Package
+        run: |
+          cd dist
+          # zip conserva il permesso di esecuzione del binario macOS
+          zip ggrabber-macos.zip ggrabber-macos
+          zip ggrabber-windows.zip ggrabber-windows.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ggrabber
+          path: dist/*.zip
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" dist/*.zip --generate-notes
