@@ -82,6 +82,21 @@ func run(dirFlag string, jobs int, noMeta, logout bool) int {
 		fmt.Println("ERRORE: impossibile creare la cartella di backup:", err)
 		return 1
 	}
+	// Un solo backup alla volta per cartella. Il lock va preso prima di aprire il log,
+	// altrimenti la seconda copia azzererebbe il log della prima.
+	lock, err := os.OpenFile(filepath.Join(root, stateDirName, "lock"), os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		fmt.Println("ERRORE: impossibile creare il file di lock:", err)
+		return 1
+	}
+	defer lock.Close()
+	if !tryLock(lock) {
+		fmt.Println("ERRORE: un altro ggrabber sta già facendo il backup in questa cartella:")
+		fmt.Println("  " + root)
+		fmt.Println("Aspetta che finisca e poi rilancialo.")
+		return 1
+	}
+
 	closeLog := openLog(filepath.Join(root, stateDirName, "ultimo-backup.log"))
 	defer closeLog()
 

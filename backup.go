@@ -98,12 +98,15 @@ func processRepo(ctx context.Context, c *Client, g *Git, root string, r *Repo, n
 	if !exists(mirror) && r.Size > 50*1024 {
 		logf("   ...scarico %s (circa %s), può volerci un po'", r.FullName, humanBytes(r.Size*1024))
 	}
-	created, err := g.syncMirror(ctx, r.CloneURL, mirror)
+	created, saved, err := g.syncMirror(ctx, r.CloneURL, mirror)
 	if err != nil {
 		res.err = err
 		return res
 	}
 	res.created = created
+	if saved > 0 {
+		res.warnings = append(res.warnings, fmt.Sprintf("%d ref riscritti su GitHub (force-push?): versioni precedenti conservate in %s", saved, historyPrefix))
+	}
 
 	if g.usesLFS(ctx, mirror) {
 		if g.hasLFS {
@@ -117,7 +120,7 @@ func processRepo(ctx context.Context, c *Client, g *Git, root string, r *Repo, n
 
 	if r.HasWiki {
 		wikiURL := strings.TrimSuffix(r.CloneURL, ".git") + ".wiki.git"
-		if _, err := g.syncMirror(ctx, wikiURL, base+".wiki.git"); err == nil {
+		if _, _, err := g.syncMirror(ctx, wikiURL, base+".wiki.git"); err == nil {
 			res.notes = append(res.notes, "wiki")
 		} else if !errors.Is(err, errNotFound) {
 			res.warnings = append(res.warnings, "wiki: "+err.Error())
@@ -138,7 +141,7 @@ func processRepo(ctx context.Context, c *Client, g *Git, root string, r *Repo, n
 func processGist(ctx context.Context, g *Git, root string, gi *Gist) result {
 	res := result{name: "gist " + gi.ID}
 	dir := filepath.Join(root, "_gists")
-	created, err := g.syncMirror(ctx, gi.GitPullURL, filepath.Join(dir, gi.ID+".git"))
+	created, _, err := g.syncMirror(ctx, gi.GitPullURL, filepath.Join(dir, gi.ID+".git"))
 	if err != nil {
 		res.err = err
 		return res

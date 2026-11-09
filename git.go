@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Git esegue il git di sistema passando il token tramite GIT_ASKPASS (questo stesso
@@ -67,42 +68,113 @@ func lastLines(s string, n int) string {
 
 var errNotFound = errors.New("repo non trovata")
 
-// syncMirror crea (clone --mirror) o aggiorna (remote update --prune) un mirror bare.
+// historyPrefix: qui finiscono i ref che GitHub ha riscritto (force-push, tag spostati),
+// così nessun commit già presente nel backup può andare perso.
+const historyPrefix = "refs/ggrabber-history/"
+
+// syncMirror crea (clone --mirror) o aggiorna un mirror bare.
+// L'aggiornamento non cancella mai nulla: i branch eliminati su GitHub restano, e i ref
+// riscritti in modo non fast-forward vengono prima salvati sotto refs/ggrabber-history/.
 // Un clone interrotto non lascia mai una cartella a metà: si clona in .partial e poi si rinomina.
-func (g *Git) syncMirror(ctx context.Context, url, dir string) (created bool, err error) {
+func (g *Git) syncMirror(ctx context.Context, url, dir string) (created bool, saved int, err error) {
 	if exists(dir) {
 		out, err := g.run(ctx, "-C", dir, "rev-parse", "--is-bare-repository")
 		if err != nil || strings.TrimSpace(out) != "true" {
-			return false, fmt.Errorf("%s esiste ma non è un mirror git valido", dir)
+			return false, 0, fmt.Errorf("%s esiste ma non è un mirror git valido", dir)
 		}
 		if _, err := g.run(ctx, "-C", dir, "remote", "set-url", "origin", url); err != nil {
-			return false, err
+			return false, 0, err
 		}
-		if _, err := g.run(ctx, "-C", dir, "remote", "update", "--prune"); err != nil {
-			return false, err
+		before, err := g.refs(ctx, dir)
+		if err != nil {
+			return false, 0, err
+		}
+		// --no-prune esplicito: vince anche su un eventuale fetch.prune=true nella config globale.
+		if _, err := g.run(ctx, "-C", dir, "fetch", "--no-prune", "--quiet", "origin"); err != nil {
+			return false, 0, err
+		}
+		saved, err = g.saveRewritten(ctx, dir, before)
+		if err != nil {
+			return false, saved, fmt.Errorf("salvataggio storico ref: %w", err)
 		}
 		g.run(ctx, "-C", dir, "gc", "--auto", "--quiet")
-		return false, nil
+		return false, saved, nil
 	}
 
 	tmp := dir + ".partial"
 	os.RemoveAll(tmp)
 	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
-		return false, err
+		return false, 0, err
 	}
 	out, err := g.run(ctx, "clone", "--mirror", "--quiet", url, tmp)
 	if err != nil {
 		os.RemoveAll(tmp)
 		low := strings.ToLower(out)
 		if strings.Contains(low, "not found") || strings.Contains(low, "does not appear to be a git repository") {
-			return false, errNotFound
+			return false, 0, errNotFound
 		}
-		return false, err
+		return false, 0, err
 	}
 	if err := os.Rename(tmp, dir); err != nil {
-		return false, err
+		return false, 0, err
 	}
-	return true, nil
+	return true, 0, nil
+}
+
+// refs restituisce ref -> sha, escluso lo storico.
+func (g *Git) refs(ctx context.Context, dir string) (map[string]string, error) {
+	out, err := g.run(ctx, "-C", dir, "for-each-ref", "--format=%(objectname) %(refname)")
+	if err != nil {
+		return nil, err
+	}
+	m := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		sha, ref, ok := strings.Cut(strings.TrimSpace(line), " ")
+		if ok && !strings.HasPrefix(ref, historyPrefix) {
+			m[ref] = sha
+		}
+	}
+	return m, nil
+}
+
+// saveRewritten confronta i ref prima e dopo il fetch e conserva il vecchio valore di
+// quelli spariti o aggiornati in modo non fast-forward.
+func (g *Git) saveRewritten(ctx context.Context, dir string, before map[string]string) (int, error) {
+	after, err := g.refs(ctx, dir)
+	if err != nil {
+		return 0, err
+	}
+	stamp := time.Now().UTC().Format("20060102T150405Z")
+	var cmds strings.Builder
+	n := 0
+	for ref, old := range before {
+		// refs/pull/N/merge è un merge di prova che GitHub ricalcola di continuo: non è storia.
+		if strings.HasPrefix(ref, "refs/pull/") && strings.HasSuffix(ref, "/merge") {
+			continue
+		}
+		cur, ok := after[ref]
+		if ok && cur == old {
+			continue
+		}
+		if ok {
+			// fast-forward: il vecchio commit è ancora raggiungibile, niente da salvare
+			if _, err := g.run(ctx, "-C", dir, "merge-base", "--is-ancestor", old, cur); err == nil {
+				continue
+			}
+		}
+		fmt.Fprintf(&cmds, "create %s%s/%s %s\n", historyPrefix, stamp, strings.TrimPrefix(ref, "refs/"), old)
+		n++
+	}
+	if n == 0 {
+		return 0, nil
+	}
+	cmd := exec.CommandContext(ctx, "git", "-c", "safe.directory=*", "-C", dir, "update-ref", "--stdin")
+	cmd.Env = g.env
+	cmd.Stdin = strings.NewReader(cmds.String())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return 0, fmt.Errorf("%s", lastLines(string(out), 3))
+	}
+	return n, nil
 }
 
 // usesLFS controlla se il branch di default usa Git LFS.

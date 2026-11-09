@@ -26,8 +26,13 @@ github-backup/
 
 - I mirror sono repo git "bare": git comprime già tutto, quindi zipparli non farebbe risparmiare spazio.
   Per avere i file di una repo basta clonare il mirror: `git clone github-backup/owner/repo.git`.
-- Le repo eliminate da GitHub **restano** nel backup. Quelle rinominate o trasferite vengono spostate
-  nella nuova cartella, senza riscaricarle.
+- **Il backup non perde mai nulla di ciò che ha già salvato**:
+  - le repo e i branch eliminati da GitHub restano nel backup;
+  - se un branch o un tag viene riscritto (force-push, tag spostato), la versione precedente è
+    conservata in `refs/ggrabber-history/<data>/…` e si vede con `git for-each-ref refs/ggrabber-history`;
+  - le repo rinominate o trasferite vengono spostate nella nuova cartella, senza riscaricarle.
+- Rilanciarlo è sicuro: aggiorna solo ciò che è cambiato. Due copie avviate insieme sulla stessa cartella
+  non si pestano i piedi, perché la seconda si ferma subito.
 - Se manca `git-lfs`, i file LFS non vengono salvati (compare un avviso).
 
 ## Login
